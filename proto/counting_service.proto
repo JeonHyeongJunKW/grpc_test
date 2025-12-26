@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package counting_service;
+
+message CountingRequest {
+  int32 start_number = 1;
+  int32 end_number = 2;
+}
+
+message CountingResponse {
+  int32 numbers = 1;
+}
+
+service CountingService {
+  rpc CountNumbers(CountingRequest) returns (stream CountingResponse);
+}
