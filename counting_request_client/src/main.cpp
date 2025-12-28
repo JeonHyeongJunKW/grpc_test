@@ -1,3 +1,5 @@
+// Copyright 2025 Hyeongjun Jeon
+
 #include <iostream>
 
 #include "grpcpp/grpcpp.h"
