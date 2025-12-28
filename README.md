@@ -4,12 +4,18 @@ gRPC를 사용한 마이크로서비스 간 통신을 학습하기 위한 테스
 
 ## 📋 프로젝트 개요
 
-간단한 카운팅 서비스를 통해 gRPC의 서버 스트리밍 패턴을 구현합니다.
+간단한 카운팅 서비스를 통해 gRPC의 **서버 스트리밍(Server Streaming)** 패턴을 구현합니다.
 
 **구성 요소:**
 - **counting_response_server** (Python): 카운팅 요청을 받아 숫자를 스트리밍으로 반환하는 gRPC 서버
 - **counting_request_client** (C++): 랜덤한 범위의 카운팅을 요청하는 gRPC 클라이언트
 - **proto**: gRPC 서비스 정의 (Protocol Buffers)
+
+**동작 흐름:**
+1. C++ 클라이언트가 랜덤한 start_number와 end_number를 생성 (1~200 사이)
+2. Python 서버에 CountingRequest를 전송
+3. 서버가 start_number부터 end_number까지 1초 간격으로 숫자를 스트리밍
+4. 클라이언트가 스트림으로 받은 숫자들을 출력
 
 ## 🏗️ 프로젝트 구조
 
@@ -35,12 +41,38 @@ grpc_test/
 
 ## 🚀 실행 방법
 
+### Docker Compose 사용 (권장)
+
 프로젝트 루트 경로에서 다음 명령어를 실행합니다:
+
 ```bash
+# Foreground 실행
 docker compose up --build
+
+# 또는 Background 실행
+docker compose up -d --build
+docker compose logs -f
+```
+
+### 실행 결과 예시
+
+```
+counting-response-server-1  | Counting Response Server started on port 9000.
+counting-request-client-1   | Waiting for channel to connect in 100 seconds
+counting-request-client-1   | Channel connected successfully!
+counting-request-client-1   | Send info 42 to 137
+counting-response-server-1  | Received counting request from 42 to 137
+counting-request-client-1   | Received number: 42
+counting-request-client-1   | Received number: 43
+counting-request-client-1   | Received number: 44
+...
+counting-request-client-1   | Received number: 137
+counting-request-client-1   | Counting completed successfully.
 ```
 
 ## 📝 gRPC 서비스 정의
+
+`proto/counting_service.proto` 파일에 정의된 서비스:
 
 ```proto
 syntax = "proto3";
@@ -53,7 +85,7 @@ message CountingRequest {
 }
 
 message CountingResponse {
-  int32 numbers = 1;
+  int32 current_number = 1;
 }
 
 service CountingService {
@@ -61,28 +93,42 @@ service CountingService {
 }
 ```
 
-**동작 방식:**
-- **클라이언트**: 랜덤한 start_number와 end_number (1~200)를 생성하여 서버에 요청
-- **서버**: start_number부터 end_number까지 숫자를 순차적으로 스트리밍 응답
+**RPC 메서드:**
+- `CountNumbers`: 단일 요청을 받아 여러 응답을 스트리밍으로 반환 (Server Streaming)
 
-## 🎯 학습 내용
+## 🎯 주요 구현 내용
 
-### 1. gRPC Server Streaming
-- 서버에서 클라이언트로 연속적인 데이터 스트리밍
-- `ClientReader`와 `ServerWriter` 활용
+### 1. Python 서버 (counting_response_server)
 
-### 2. 다중 언어 지원
-- Python (서버)과 C++ (클라이언트)에서 동일한 proto 파일 사용
-- 언어 간 상호 운용성
+**핵심 코드:**
+```python
+class CountingResponseServicer(counting_service_pb2_grpc.CountingServiceServicer):
+    def CountNumbers(self, request, context):
+        print(f"Received counting request from {request.start_number} to {request.end_number}")
+        start_num = request.start_number
+        end_num = request.end_number
+        for number in range(start_num, end_num + 1):
+            time.sleep(1)  # 1초 지연
+            response = counting_service_pb2.CountingResponse(current_number=number)
+            yield response  # 스트리밍 응답
 
-### 3. Docker 환경에서의 마이크로서비스 통신
-- Docker Compose를 통한 서비스 간 네트워크 설정
-- DNS 기반 서비스 디스커버리 (서비스 이름으로 통신)
-- 채널 연결 관리 및 타임아웃 처리
+def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    counting_service_pb2_grpc.add_CountingServiceServicer_to_server(
+        CountingResponseServicer(), server)
+    server.add_insecure_port('[::]:9000')  # IPv4/IPv6 모두 수신
+    server.start()
+    server.wait_for_termination()
+```
 
-## 💡 주요 개념
+**특징:**
+- `yield`를 사용한 제너레이터로 스트리밍 구현
+- `[::]:9000` 주소로 IPv4와 IPv6 모두 지원
+- ThreadPoolExecutor로 동시 요청 처리 (최대 10개)
 
-### 채널 연결 대기
+### 2. C++ 클라이언트 (counting_request_client)
+
+**채널 연결 및 타임아웃 처리:**
 ```cpp
 std::shared_ptr<grpc::Channel> channel =
   grpc::CreateChannel("counting-response-server:9000", grpc::InsecureChannelCredentials());
@@ -90,18 +136,140 @@ std::shared_ptr<grpc::Channel> channel =
 auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(100);
 if (channel->WaitForConnected(deadline)) {
   // 연결 성공
+  CountingRequestClient client(channel);
+  client.send_random_counting_request();
 } else {
   // 타임아웃
+  std::cerr << "Failed to connect to server within timeout period" << std::endl;
 }
 ```
 
-### 스트리밍 응답 처리
+**랜덤 범위 생성:**
 ```cpp
-std::unique_ptr<grpc::ClientReader<CountingResponse>> reader(
-  stub_->CountNumbers(&context, request));
-
-while (reader->Read(&response)) {
-  // 각 메시지 처리
+CountingRequestClient::CountingRequestClient(std::shared_ptr<grpc::Channel> channel)
+{
+  stub_ = counting_service::CountingService::NewStub(channel);
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<int> dis(1, 100);
+  start_number_ = dis(gen);           // 1~100 사이 랜덤
+  end_number_ = start_number_ + dis(gen);  // start + (1~100)
 }
-grpc::Status status = reader->Finish();
+```
+
+**스트리밍 응답 수신:**
+```cpp
+void CountingRequestClient::send_random_counting_request()
+{
+  counting_service::CountingRequest request;
+  request.set_start_number(start_number_);
+  request.set_end_number(end_number_);
+
+  grpc::ClientContext context;
+  std::unique_ptr<grpc::ClientReader<counting_service::CountingResponse>> reader(
+    stub_->CountNumbers(&context, request));
+
+  while (reader->Read(&response)) {
+    std::cout << "Received number: " << response.current_number() << std::endl;
+  }
+
+  grpc::Status status = reader->Finish();
+  if (status.ok()) {
+    std::cout << "Counting completed successfully." << std::endl;
+  }
+}
+```
+
+**특징:**
+- `WaitForConnected()`로 서버 연결 대기 (최대 100초)
+- `ClientReader`로 스트리밍 데이터 수신
+- Mersenne Twister(mt19937) 난수 생성기 사용
+
+### 3. Docker Compose 네트워킹
+
+```yaml
+services:
+  counting-request-client:
+    build:
+      context: .
+      dockerfile: counting_request_client/Dockerfile.release
+  counting-response-server:
+    environment:
+      - PYTHONUNBUFFERED=1
+    build:
+      context: .
+      dockerfile: counting_response_server/Dockerfile.release
+```
+
+**주요 포인트:**
+- 서비스 이름이 DNS로 자동 등록 (`counting-response-server`)
+- 명시적인 네트워크 설정 없이 같은 compose 파일의 서비스끼리 통신 가능
+- `PYTHONUNBUFFERED=1`로 Python 출력 버퍼링 비활성화
+
+## 💡 학습 포인트
+
+### 1. gRPC Server Streaming 패턴
+- 단일 요청에 대해 여러 응답을 순차적으로 전송
+- 실시간 데이터 피드, 진행 상황 업데이트 등에 유용
+- Python: `yield`로 구현, C++: `ClientReader`로 수신
+
+### 2. 다중 언어 지원 (Polyglot)
+- 동일한 `.proto` 파일에서 Python과 C++ 코드 자동 생성
+- 언어 간 완벽한 상호 운용성
+- Protocol Buffers를 통한 효율적인 직렬화
+
+### 3. Docker 마이크로서비스 통신
+- Docker Compose의 내부 DNS를 통한 서비스 디스커버리
+- 서비스 이름으로 다른 컨테이너에 접근 가능
+- 채널 연결 타임아웃 처리의 중요성
+
+### 4. 비동기 처리
+- 서버: ThreadPoolExecutor를 사용한 동시 요청 처리
+- 클라이언트: 블로킹 방식의 스트림 수신
+
+## 🔧 빌드 스크립트
+
+### Python 서버
+```bash
+cd counting_response_server
+bash build.sh
+```
+- protoc로 Python gRPC 코드 생성
+
+### C++ 클라이언트
+```bash
+cd counting_request_client
+bash build.sh
+```
+- CMake로 빌드 설정
+- protoc로 C++ gRPC 코드 생성
+- 실행 파일: `counting_request_client`
+
+## 📚 참고사항
+
+### gRPC 설치
+프로젝트는 Docker 환경에서 실행되므로 로컬에 gRPC를 설치할 필요는 없지만, 개발 환경 구성이 필요한 경우:
+- Python: `scripts/install_grpc_python.sh`
+- C++: `scripts/install_grpc_cplusplus.sh`
+
+### 통신 포트
+- gRPC 서버: `9000`
+- 프로토콜: HTTP/2 (gRPC 기본)
+- 보안: InsecureChannel (테스트용, 프로덕션에서는 TLS 사용 권장)
+
+## 🐛 트러블슈팅
+
+### 클라이언트가 서버에 연결하지 못하는 경우
+1. 서비스 이름 확인: `docker-compose.yml`의 서비스 이름과 클라이언트 코드의 주소가 일치하는지 확인
+2. 포트 번호 확인: 서버와 클라이언트 모두 `9000` 포트 사용
+3. 컨테이너 재시작: `docker compose down && docker compose up --build`
+
+### 로그 확인
+```bash
+# 모든 서비스 로그
+docker compose logs -f
+
+# 특정 서비스만
+docker compose logs -f counting-response-server
+docker compose logs -f counting-request-client
 ```
