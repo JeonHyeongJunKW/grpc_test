@@ -8,7 +8,7 @@ message CountingRequest {
 }
 
 message CountingResponse {
-  int32 numbers = 1;
+  int32 current_number = 1;
 }
 
 service CountingService {

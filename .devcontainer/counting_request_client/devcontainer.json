@@ -10,10 +10,7 @@
     //   "--no-cache"
     // ]
   },
-  "runArgs": [
-    "--gpus",
-    "device=0"
-  ],
+  "remoteUser": "vscode",
   "customizations": {
     "vscode": {
       "extensions": [
