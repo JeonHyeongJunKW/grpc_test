@@ -21,23 +21,37 @@ gRPC를 사용한 마이크로서비스 간 통신을 학습하기 위한 테스
 
 ```
 grpc_test/
-├── docker-compose.yml              # Docker Compose 설정
+├── docker-compose.yml                  # Docker Compose 설정
+├── .gitignore                          # Git 제외 파일 설정
 ├── proto/
-│   └── counting_service.proto      # gRPC 서비스 정의
-├── counting_response_server/       # Python 서버
-│   ├── main.py
-│   ├── build.sh
-│   └── Dockerfile.release
-├── counting_request_client/        # C++ 클라이언트
-│   ├── include/
-│   ├── src/
-│   ├── CMakeLists.txt
-│   ├── build.sh
-│   └── Dockerfile.release
-└── scripts/                        # 설치 스크립트
+│   └── counting_service.proto          # gRPC 서비스 정의
+├── counting_response_server/           # Python 서버
+│   ├── main.py                         # 서버 메인 코드
+│   ├── build.sh                        # 빌드 스크립트
+│   ├── Dockerfile.release              # 프로덕션 Dockerfile
+│   ├── *_pb2.py                        # 생성된 protobuf 파일 (gitignore)
+│   └── *_pb2_grpc.py                   # 생성된 gRPC 파일 (gitignore)
+├── counting_request_client/            # C++ 클라이언트
+│   ├── include/                        # 헤더 파일
+│   ├── src/                            # 소스 파일
+│   ├── CMakeLists.txt                  # CMake 빌드 설정
+│   ├── build.sh                        # 빌드 스크립트
+│   ├── build/                          # 빌드 결과물 (gitignore)
+│   │   ├── counting_request_client     # 실행 파일
+│   │   └── generated_proto/            # 생성된 protobuf 파일
+│   └── Dockerfile.release              # 프로덕션 Dockerfile
+├── .devcontainer/                      # VS Code Dev Container 설정
+│   ├── counting_request_client/
+│   └── counting_response_server/
+└── scripts/                            # gRPC 설치 스크립트
     ├── install_grpc_python.sh
     └── install_grpc_cplusplus.sh
 ```
+
+**빌드 디렉토리 구조 (Out-of-source Build):**
+- ✅ 소스 코드와 빌드 결과물 완전 분리
+- ✅ `build/` 디렉토리는 `.gitignore`에 포함되어 Git 추적 제외
+- ✅ 생성된 protobuf 파일들도 자동으로 무시
 
 ## 🚀 실행 방법
 
@@ -230,27 +244,120 @@ services:
 ## 🔧 빌드 스크립트
 
 ### Python 서버
+
+**빌드 방법:**
 ```bash
 cd counting_response_server
-bash build.sh
+source build.sh
+build_counting_response_server
 ```
-- protoc로 Python gRPC 코드 생성
+
+**빌드 스크립트 내용:**
+```bash
+function build_counting_response_server() {
+  # Get the directory where this script is located
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  # Generate protobuf files in current directory
+  cd "$SCRIPT_DIR"
+  python3 -m grpc_tools.protoc -I../proto --python_out=. --pyi_out=. --grpc_python_out=. \
+    ../proto/counting_service.proto
+
+  echo "Build complete! Generated files in $SCRIPT_DIR"
+}
+```
+
+**생성되는 파일:**
+- `counting_service_pb2.py` - Protocol Buffers 메시지 정의
+- `counting_service_pb2.pyi` - 타입 힌트 파일
+- `counting_service_pb2_grpc.py` - gRPC 서비스 스텁
 
 ### C++ 클라이언트
+
+**빌드 방법:**
 ```bash
 cd counting_request_client
-bash build.sh
+source build.sh
+build_counting_request_client
 ```
-- CMake로 빌드 설정
-- protoc로 C++ gRPC 코드 생성
-- 실행 파일: `counting_request_client`
 
-## 📚 참고사항
+**빌드 스크립트 내용:**
+```bash
+function build_counting_request_client() {
+  # Get the directory where this script is located
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-### gRPC 설치
+  # Build C++ project (CMake will generate protobuf files automatically)
+  cd "$SCRIPT_DIR"
+  rm -rf build
+  mkdir -p build
+  cd build
+  cmake ..
+  make -j4
+
+  echo "Build complete! Executable: $SCRIPT_DIR/build/counting_request_client"
+}
+```
+
+**빌드 결과물:**
+- `build/counting_request_client` - 실행 파일
+- `build/generated_proto/*.pb.cc` - 생성된 Protocol Buffers C++ 파일
+- `build/generated_proto/*.grpc.pb.cc` - 생성된 gRPC C++ 파일
+
+**특징:**
+- ✅ **Out-of-source Build**: 소스 코드와 빌드 결과물 완전 분리
+- ✅ **워크스페이스 내 빌드**: 더 이상 홈 디렉토리로 복사하지 않음
+- ✅ **즉시 반영**: 소스 코드 수정 후 빌드하면 바로 반영
+- ✅ **자동 proto 생성**: CMake가 protobuf 파일 자동 생성
+
+## 📚 개발 환경 설정
+
+### Dev Container 사용 (권장)
+
+VS Code에서 Dev Container를 사용하여 개발할 수 있습니다:
+
+1. VS Code에서 프로젝트 열기
+2. Command Palette (Ctrl+Shift+P) → "Dev Containers: Reopen in Container"
+3. 개발하고 싶은 컨테이너 선택:
+   - `counting_request_client` (C++ 개발 환경)
+   - `counting_response_server` (Python 개발 환경)
+
+### 로컬 개발 워크플로우
+
+**C++ 클라이언트 개발:**
+```bash
+# Dev Container 내에서
+cd /workspaces/grpc_test/counting_request_client
+source build.sh && build_counting_request_client
+./build/counting_request_client
+```
+
+**Python 서버 개발:**
+```bash
+# Dev Container 내에서
+cd /workspaces/grpc_test/counting_response_server
+source build.sh && build_counting_response_server
+python3 main.py
+```
+
+### gRPC 설치 (로컬 환경)
+
 프로젝트는 Docker 환경에서 실행되므로 로컬에 gRPC를 설치할 필요는 없지만, 개발 환경 구성이 필요한 경우:
 - Python: `scripts/install_grpc_python.sh`
 - C++: `scripts/install_grpc_cplusplus.sh`
+
+### 빌드 시스템
+
+**C++ (CMake):**
+- CMake 3.16 이상
+- Out-of-source build 방식
+- `build/` 디렉토리에 빌드 결과물 생성
+- protobuf 파일 자동 생성
+
+**Python:**
+- `grpc_tools.protoc`를 사용한 코드 생성
+- 생성된 파일은 서버 디렉토리에 저장
+- 모든 생성 파일은 `.gitignore`에 포함
 
 ### 통신 포트
 - gRPC 서버: `9000`
@@ -260,9 +367,33 @@ bash build.sh
 ## 🐛 트러블슈팅
 
 ### 클라이언트가 서버에 연결하지 못하는 경우
-1. 서비스 이름 확인: `docker-compose.yml`의 서비스 이름과 클라이언트 코드의 주소가 일치하는지 확인
-2. 포트 번호 확인: 서버와 클라이언트 모두 `9000` 포트 사용
-3. 컨테이너 재시작: `docker compose down && docker compose up --build`
+1. **서비스 이름 확인**: `docker-compose.yml`의 서비스 이름과 클라이언트 코드의 주소가 일치하는지 확인
+   - 예: `counting-response-server:9000`
+2. **포트 번호 확인**: 서버와 클라이언트 모두 `9000` 포트 사용
+3. **컨테이너 재시작**: `docker compose down && docker compose up --build`
+
+### 빌드 실패 시
+1. **빌드 디렉토리 정리**:
+   ```bash
+   # C++ 클라이언트
+   rm -rf counting_request_client/build
+
+   # Python 서버 (생성된 파일 삭제)
+   rm -f counting_response_server/*_pb2.py
+   rm -f counting_response_server/*_pb2.pyi
+   rm -f counting_response_server/*_pb2_grpc.py
+   ```
+
+2. **Docker 이미지 재빌드**:
+   ```bash
+   docker compose down
+   docker compose build --no-cache
+   docker compose up
+   ```
+
+### 소스 코드 수정이 반영되지 않는 경우
+- ✅ **Dev Container**: 워크스페이스에서 직접 빌드하므로 즉시 반영됨
+- ✅ **Docker Compose**: 이미지를 재빌드해야 함 (`--build` 옵션)
 
 ### 로그 확인
 ```bash
@@ -272,4 +403,31 @@ docker compose logs -f
 # 특정 서비스만
 docker compose logs -f counting-response-server
 docker compose logs -f counting-request-client
+
+# Background 실행 후 로그 보기 (권장)
+docker compose up -d
+docker compose logs -f
 ```
+
+## 🎓 학습 자료
+
+### 프로젝트에서 사용된 개념
+
+1. **Out-of-source Build**
+   - 소스 코드와 빌드 결과물을 분리하는 표준 방식
+   - CMake 공식 권장 방법
+   - 참고: [CMake Tutorial](https://cmake.org/cmake/help/latest/guide/tutorial/index.html)
+
+2. **gRPC Server Streaming**
+   - 단일 요청에 대해 여러 응답을 스트리밍
+   - 참고: [gRPC Concepts](https://grpc.io/docs/what-is-grpc/core-concepts/)
+
+3. **Protocol Buffers**
+   - 효율적인 직렬화 포맷
+   - 다중 언어 지원
+   - 참고: [Protocol Buffers Guide](https://protobuf.dev/)
+
+4. **Docker 마이크로서비스**
+   - Docker Compose를 통한 서비스 오케스트레이션
+   - 내부 DNS를 통한 서비스 디스커버리
+   - 참고: [Docker Compose Networking](https://docs.docker.com/compose/networking/)
