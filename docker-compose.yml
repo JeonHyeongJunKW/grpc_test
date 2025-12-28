@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  counting_request_client:
+    build:
+      context: .
+      dockerfile: counting_request_client/Dockerfile.release
+    command: ["./counting_request_client"]

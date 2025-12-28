@@ -1,5 +1,4 @@
 function build_counting_request_client() {
-  cd /workspaces/grpc_test/counting_request_client
   rm -rf ~/counting_request_client
   cp -r ../counting_request_client ~/counting_request_client
   cp -r ../proto ~/counting_request_client/proto

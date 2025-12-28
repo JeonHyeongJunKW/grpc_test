@@ -29,8 +29,17 @@ COPY ./scripts/install_grpc_cplusplus.sh /usr/local/bin/scripts/install_grpc_cpl
 RUN bash -c "source /usr/local/bin/scripts/install_grpc_cplusplus.sh && install_grpc_cplusplus && rm -rf /usr/local/bin/scripts/install_grpc_cplusplus.sh"
 RUN apt-get update && apt-get install -y protobuf-compiler protobuf-compiler-grpc
 
-ARG USERNAME=vscode
+ARG USERNAME=client_user
 RUN useradd -ms /bin/bash $USERNAME
 
-USER $USERNAME
 WORKDIR /home/$USERNAME
+
+COPY --chown=$USERNAME:$USERNAME ./ ./grpc_test
+USER $USERNAME
+
+WORKDIR /home/$USERNAME/grpc_test/counting_request_client
+RUN bash -c "source build.sh && build_counting_request_client"
+
+# Change working directory to the build output and set the default command
+WORKDIR /home/$USERNAME/counting_request_client/build
+CMD ["./counting_request_client"]
