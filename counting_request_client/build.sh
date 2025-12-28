@@ -1,10 +1,14 @@
 function build_counting_request_client() {
-  rm -rf ~/counting_request_client
-  cp -r ../counting_request_client ~/counting_request_client
-  cp -r ../proto ~/counting_request_client/proto
-  cd ~/counting_request_client
-  mkdir build
+  # Get the directory where this script is located
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  # Build C++ project (CMake will generate protobuf files automatically)
+  cd "$SCRIPT_DIR"
+  rm -rf build
+  mkdir -p build
   cd build
   cmake ..
   make -j4
+
+  echo "Build complete! Executable: $SCRIPT_DIR/build/counting_request_client"
 }

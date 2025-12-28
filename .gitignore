@@ -39,3 +39,21 @@
 
 # debug information files
 *.dwo
+
+# Build directories
+build/
+install/
+
+# Generated protobuf files
+*_pb2.py
+*_pb2.pyi
+*_pb2_grpc.py
+*.pb.h
+*.pb.cc
+*.grpc.pb.h
+*.grpc.pb.cc
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

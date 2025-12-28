@@ -8,7 +8,7 @@ find_package(Protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
 
-set(PROTO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(PROTO_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../proto")
 message(STATUS "PROTO_PATH: ${PROTO_PATH}")
 set(GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_proto")
 file(MAKE_DIRECTORY "${GEN_DIR}")
