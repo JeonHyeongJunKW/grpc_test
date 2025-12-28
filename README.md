@@ -48,11 +48,14 @@ grpc_test/
 - **패턴**: Server Streaming RPC
 
 **클라이언트 동작 방식:**
-1. 랜덤한 start_number와 end_number를 생성 (1~200 범위)
-2. gRPC 채널을 통해 서버에 요청 전송
-3. `ClientReader`를 사용하여 서버로부터 스트리밍 응답 수신
-4. 각 숫자를 실시간으로 출력
-5. 스트림 종료 후 상태 확인
+1. gRPC 채널 생성 (서버 주소로 연결)
+2. `WaitForConnected()` 사용하여 채널 연결 대기 (100초 타임아웃)
+3. 연결 성공 확인 후 클라이언트 인스턴스 생성
+4. 랜덤한 start_number와 end_number를 생성 (1~200 범위)
+5. gRPC 채널을 통해 서버에 요청 전송
+6. `ClientReader`를 사용하여 서버로부터 스트리밍 응답 수신
+7. 각 숫자를 실시간으로 출력
+8. 스트림 종료 후 상태 확인
 
 **서버 동작 방식:**
 - 클라이언트 요청을 받아 start_number부터 end_number까지 순차적으로 스트리밍
@@ -136,6 +139,7 @@ service CountingService {
 4. **마이크로서비스 통신 패턴**
    - 서비스 간 네트워크 통신 설정
    - DNS 기반 서비스 디스커버리
+   - 채널 연결 상태 관리 및 타임아웃 처리
    - 에러 핸들링 및 연결 관리
 
 ## ⚠️ 주의사항 및 트러블슈팅
@@ -198,6 +202,42 @@ grpc::Status status = reader->Finish();
 - 서버가 메시지를 보낼 때마다 `Read()`가 true를 반환하며 루프 계속
 - 서버가 스트림을 종료하면 `Read()`가 false를 반환하여 루프 종료
 - `Finish()`로 최종 RPC 상태를 확인해야 함 (성공/실패 판단)
+
+### 채널 연결 대기
+
+```cpp
+std::shared_ptr<grpc::Channel> channel =
+  grpc::CreateChannel("counting-response-server:9000", grpc::InsecureChannelCredentials());
+
+// Wait for channel to be ready (with timeout)
+auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(100);
+if (channel->WaitForConnected(deadline)) {
+  std::cout << "Channel connected successfully!" << std::endl;
+  // 클라이언트 로직 실행
+} else {
+  std::cerr << "Failed to connect to server within timeout period" << std::endl;
+  return 1;
+}
+```
+
+**중요 개념:**
+- `WaitForConnected(deadline)`: 지정된 시간까지 채널 연결 대기
+- 연결 성공 시 `true` 반환, 타임아웃 시 `false` 반환
+- 서버가 아직 시작되지 않았거나 네트워크 문제가 있을 때 유용
+- 무한 대기를 방지하기 위해 타임아웃 설정 필수
+- 프로덕션 환경에서는 재시도 로직과 함께 사용하는 것을 권장
+
+**타임아웃 설정:**
+```cpp
+// 100초 타임아웃 (현재 구현)
+auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(100);
+
+// 10초 타임아웃
+auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
+
+// 무한 대기 (권장하지 않음)
+gpr_timespec inf_future = gpr_inf_future(GPR_CLOCK_REALTIME);
+```
 
 ## 🔍 참고사항
 

@@ -23,5 +23,4 @@ class CountingRequestClient {
   int start_number_ = 0;
   int end_number_ = 0;
 };
-
 #endif  // COUNTING_REQUEST_CLIENT__COUNTING_REQUEST_CLIENT_HPP_
