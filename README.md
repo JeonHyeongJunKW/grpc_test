@@ -4,18 +4,26 @@ gRPC를 사용한 마이크로서비스 간 통신을 학습하기 위한 테스
 
 ## 📋 프로젝트 개요
 
-간단한 카운팅 서비스를 통해 gRPC의 **서버 스트리밍(Server Streaming)** 패턴을 구현합니다.
+gRPC의 **서버 스트리밍(Server Streaming)** 패턴과 **단방향 RPC(Unary RPC)**를 구현한 학습 프로젝트입니다.
 
 **구성 요소:**
-- **counting_response_server** (Python): 카운팅 요청을 받아 숫자를 스트리밍으로 반환하는 gRPC 서버
-- **counting_request_client** (C++): 랜덤한 범위의 카운팅을 요청하는 gRPC 클라이언트
+- **counting_response_server** (Python): 카운팅 요청을 받아 숫자를 스트리밍으로 반환하고, prefix 변경을 처리하는 gRPC 서버
+- **counting_request_client** (C++): 랜덤한 범위의 카운팅을 요청하고, 중간 지점에서 prefix를 동적으로 변경하는 gRPC 클라이언트
 - **proto**: gRPC 서비스 정의 (Protocol Buffers)
 
 **동작 흐름:**
 1. C++ 클라이언트가 랜덤한 start_number와 end_number를 생성 (1~200 사이)
-2. Python 서버에 CountingRequest를 전송
-3. 서버가 start_number부터 end_number까지 1초 간격으로 숫자를 스트리밍
-4. 클라이언트가 스트림으로 받은 숫자들을 출력
+2. 초기 prefix("Old number: ")를 서버에 설정
+3. Python 서버에 CountingRequest를 전송하여 스트리밍 시작
+4. 서버가 start_number부터 end_number까지 1초 간격으로 숫자를 스트리밍
+5. 클라이언트가 중간 지점 도달 시 ChangePrefix RPC를 호출하여 prefix를 "New number: "로 변경
+6. 변경된 prefix로 나머지 숫자들이 출력됨
+
+**주요 기능:**
+- 🔄 **Server Streaming**: 단일 요청에 대해 여러 응답을 순차적으로 스트리밍
+- 🔧 **Unary RPC**: 실시간으로 서버 상태(prefix) 변경
+- 🔀 **동시성**: ThreadPoolExecutor를 통한 병렬 요청 처리 (최대 10개)
+- 🎲 **동적 로직**: 스트리밍 중간에 서버 상태를 변경하는 패턴
 
 ## 🏗️ 프로젝트 구조
 
@@ -74,11 +82,17 @@ docker compose logs -f
 counting-response-server-1  | Counting Response Server started on port 9000.
 counting-request-client-1   | Waiting for channel to connect in 100 seconds
 counting-request-client-1   | Channel connected successfully!
+counting-request-client-1   | Prefix changed successfully from 'Number: ' to 'Old number: '.
 counting-request-client-1   | Send info 42 to 137
 counting-response-server-1  | Received counting request from 42 to 137
+counting-response-server-1  | Old number:
 counting-request-client-1   | Received number: 42
 counting-request-client-1   | Received number: 43
-counting-request-client-1   | Received number: 44
+...
+counting-request-client-1   | Received number: 89  (← 중간 지점!)
+counting-request-client-1   | Prefix changed successfully from 'Old number: ' to 'New number: '.
+counting-response-server-1  | New number:
+counting-request-client-1   | Received number: 90
 ...
 counting-request-client-1   | Received number: 137
 counting-request-client-1   | Counting completed successfully.
@@ -102,13 +116,23 @@ message CountingResponse {
   int32 current_number = 1;
 }
 
+message PrefixRequest {
+  string new_prefix = 1;
+}
+
+message PrefixResponse {
+  string old_prefix = 1;
+}
+
 service CountingService {
   rpc CountNumbers(CountingRequest) returns (stream CountingResponse);
+  rpc ChangePrefix(PrefixRequest) returns (PrefixResponse);
 }
 ```
 
 **RPC 메서드:**
 - `CountNumbers`: 단일 요청을 받아 여러 응답을 스트리밍으로 반환 (Server Streaming)
+- `ChangePrefix`: 서버의 출력 prefix를 변경 (Unary RPC)
 
 ## 🎯 주요 구현 내용
 
@@ -117,14 +141,23 @@ service CountingService {
 **핵심 코드:**
 ```python
 class CountingResponseServicer(counting_service_pb2_grpc.CountingServiceServicer):
+    def __init__(self):
+        self.prefix = "Number: "
+
     def CountNumbers(self, request, context):
         print(f"Received counting request from {request.start_number} to {request.end_number}")
         start_num = request.start_number
         end_num = request.end_number
         for number in range(start_num, end_num + 1):
             time.sleep(1)  # 1초 지연
+            print(self.prefix)  # 현재 prefix 출력
             response = counting_service_pb2.CountingResponse(current_number=number)
             yield response  # 스트리밍 응답
+
+    def ChangePrefix(self, request, context):
+        old_prefix = self.prefix
+        self.prefix = request.new_prefix
+        return counting_service_pb2.PrefixResponse(old_prefix=old_prefix)
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
@@ -139,6 +172,7 @@ def serve():
 - `yield`를 사용한 제너레이터로 스트리밍 구현
 - `[::]:9000` 주소로 IPv4와 IPv6 모두 지원
 - ThreadPoolExecutor로 동시 요청 처리 (최대 10개)
+- **공유 상태**: `self.prefix`를 통해 모든 클라이언트가 상태 공유 (Race condition 주의)
 
 ### 2. C++ 클라이언트 (counting_request_client)
 
@@ -171,10 +205,13 @@ CountingRequestClient::CountingRequestClient(std::shared_ptr<grpc::Channel> chan
 }
 ```
 
-**스트리밍 응답 수신:**
+**스트리밍 응답 수신 및 동적 prefix 변경:**
 ```cpp
 void CountingRequestClient::send_random_counting_request()
 {
+  // 초기 prefix 설정
+  this->change_prefix("Old number: ");
+
   counting_service::CountingRequest request;
   request.set_start_number(start_number_);
   request.set_end_number(end_number_);
@@ -185,11 +222,37 @@ void CountingRequestClient::send_random_counting_request()
 
   while (reader->Read(&response)) {
     std::cout << "Received number: " << response.current_number() << std::endl;
+
+    // 중간 지점 계산
+    const bool is_middle_number =
+      (end_number_ - start_number_) % 2 == 0 ?
+      (response.current_number() == (start_number_ + end_number_) / 2) :
+      (response.current_number() == (start_number_ + end_number_ + 1) / 2);
+
+    // 중간 지점에서 prefix 변경
+    if (is_middle_number) {
+      this->change_prefix("New number: ");
+    }
   }
 
   grpc::Status status = reader->Finish();
   if (status.ok()) {
     std::cout << "Counting completed successfully." << std::endl;
+  }
+}
+
+void CountingRequestClient::change_prefix(std::string target_prefix)
+{
+  counting_service::PrefixRequest request;
+  request.set_new_prefix(target_prefix);
+
+  counting_service::PrefixResponse response;
+  grpc::ClientContext context;
+
+  grpc::Status status = stub_->ChangePrefix(&context, request, &response);
+  if (status.ok()) {
+    std::cout << "Prefix changed successfully from '" << response.old_prefix()
+              << "' to '" << target_prefix << "'." << std::endl;
   }
 }
 ```
@@ -198,6 +261,8 @@ void CountingRequestClient::send_random_counting_request()
 - `WaitForConnected()`로 서버 연결 대기 (최대 100초)
 - `ClientReader`로 스트리밍 데이터 수신
 - Mersenne Twister(mt19937) 난수 생성기 사용
+- **동적 로직**: 스트리밍 중간에 `ChangePrefix` RPC를 호출하여 서버 상태 변경
+- **중간 지점 계산**: 홀수/짝수 개수에 따라 정확한 중간값 계산
 
 ### 3. Docker Compose 네트워킹
 
@@ -222,9 +287,10 @@ services:
 
 ## 💡 학습 포인트
 
-### 1. gRPC Server Streaming 패턴
-- 단일 요청에 대해 여러 응답을 순차적으로 전송
-- 실시간 데이터 피드, 진행 상황 업데이트 등에 유용
+### 1. gRPC 통신 패턴
+- **Server Streaming**: 단일 요청에 대해 여러 응답을 순차적으로 전송
+- **Unary RPC**: 단일 요청-응답 패턴으로 서버 상태 변경
+- 실시간 데이터 피드와 제어 명령을 함께 사용하는 패턴
 - Python: `yield`로 구현, C++: `ClientReader`로 수신
 
 ### 2. 다중 언어 지원 (Polyglot)
@@ -237,9 +303,17 @@ services:
 - 서비스 이름으로 다른 컨테이너에 접근 가능
 - 채널 연결 타임아웃 처리의 중요성
 
-### 4. 비동기 처리
-- 서버: ThreadPoolExecutor를 사용한 동시 요청 처리
-- 클라이언트: 블로킹 방식의 스트림 수신
+### 4. 동시성 및 상태 관리
+- **서버**: ThreadPoolExecutor를 사용한 병렬 요청 처리 (최대 10개)
+- **주의사항**: 공유 상태(`self.prefix`) 접근 시 Race Condition 가능
+- **해결방법**: 스레드 락 사용 또는 클라이언트별 상태 관리 필요
+- **클라이언트**: 블로킹 방식의 스트림 수신, 중간에 Unary RPC 호출
+
+### 5. gRPC ClientContext
+- 요청 메타데이터 및 설정 관리
+- 타임아웃(deadline) 설정 가능 (기본값: 무제한)
+- 압축, 인증, 메타데이터 전송 등 다양한 옵션 제공
+- HTTP 헤더와 유사한 역할
 
 ## 🔧 빌드 스크립트
 
@@ -255,22 +329,29 @@ build_counting_response_server
 **빌드 스크립트 내용:**
 ```bash
 function build_counting_response_server() {
-  # Get the directory where this script is located
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-  # Generate protobuf files in current directory
+  # Generate protobuf files in current directory (not subdirectory)
   cd "$SCRIPT_DIR"
-  python3 -m grpc_tools.protoc -I../proto --python_out=. --pyi_out=. --grpc_python_out=. \
+  python3 -m grpc_tools.protoc -I../proto \
+    --python_out=. \
+    --pyi_out=. \
+    --grpc_python_out=. \
     ../proto/counting_service.proto
 
   echo "Build complete! Generated files in $SCRIPT_DIR"
 }
 ```
 
-**생성되는 파일:**
+**생성되는 파일 (서버 디렉토리에 직접 생성):**
 - `counting_service_pb2.py` - Protocol Buffers 메시지 정의
 - `counting_service_pb2.pyi` - 타입 힌트 파일
 - `counting_service_pb2_grpc.py` - gRPC 서비스 스텁
+
+**설계 결정:**
+- ✅ **같은 디렉토리 생성**: Python gRPC의 import 문제 방지 (가장 안정적)
+- ✅ `.gitignore`에서 `*_pb2*.py` 패턴으로 자동 제외
+- ✅ `protoc`가 생성하는 절대 경로 import와 호환
 
 ### C++ 클라이언트
 
