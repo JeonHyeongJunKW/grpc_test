@@ -20,6 +20,7 @@ CountingRequestClient::~CountingRequestClient()
 
 void CountingRequestClient::send_random_counting_request()
 {
+  this->change_prefix(old_prefix_);
   counting_service::CountingRequest request;
   request.set_start_number(start_number_);
   request.set_end_number(end_number_);
@@ -31,11 +32,35 @@ void CountingRequestClient::send_random_counting_request()
     stub_->CountNumbers(&context, request));
   while (reader->Read(&response)) {
     std::cout << "Received number: " << response.current_number() << std::endl;
+    const bool is_middle_number =
+      (end_number_ - start_number_) % 2 == 0 ?
+      (response.current_number() == (start_number_ + end_number_) / 2) :
+      (response.current_number() == (start_number_ + end_number_ + 1) / 2);
+    if (is_middle_number) {
+      this->change_prefix(new_prefix_);
+    }
   }
   grpc::Status status = reader->Finish();
   if (status.ok()) {
     std::cout << "Counting completed successfully." << std::endl;
   } else {
     std::cout << "Counting failed: " << status.error_message() << std::endl;
+  }
+}
+
+void CountingRequestClient::change_prefix(std::string target_prefix)
+{
+  counting_service::PrefixRequest request;
+  request.set_new_prefix(target_prefix);
+
+  counting_service::PrefixResponse response;
+  grpc::ClientContext context;
+
+  grpc::Status status = stub_->ChangePrefix(&context, request, &response);
+  if (status.ok()) {
+    std::cout << "Prefix changed successfully from '" << response.old_prefix()
+              << "' to '" << target_prefix << "'." << std::endl;
+  } else {
+    std::cout << "Failed to change prefix: " << status.error_message() << std::endl;
   }
 }

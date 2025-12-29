@@ -11,6 +11,15 @@ message CountingResponse {
   int32 current_number = 1;
 }
 
+message PrefixRequest {
+  string new_prefix = 1;
+}
+
+message PrefixResponse {
+  string old_prefix = 1;
+}
+
 service CountingService {
   rpc CountNumbers(CountingRequest) returns (stream CountingResponse);
+  rpc ChangePrefix(PrefixRequest) returns (PrefixResponse);
 }
